@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Make a wish</title>
+  <meta name="description" content="Blow out the candles on a virtual birthday cake.">
+  <meta name="theme-color" content="#fde9ee">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="micIcon" viewBox="0 0 24 24"><rect x="8.5" y="2.5" width="7" height="12" rx="3.5" fill="currentColor"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3M8.5 21.5h7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+  </svg>
+  <div class="wipe" aria-hidden="true"></div>
+
+  <main class="stage" id="stage" data-state="loading">
+    <header class="copy">
+      <h1 id="title" tabindex="-1"></h1>
+      <p id="sub" aria-live="polite"></p>
+    </header>
+
+    <div class="cake-wrap">
+      <div id="cake" role="img" aria-label="A 3D birthday cake. Drag to spin it."></div>
+    </div>
+
+    <div class="controls">
+      <div class="panel" data-for="audience audience-done">
+        <p class="note" id="pickNote"></p>
+        <div class="chips" id="chips" role="group" aria-label="Candles"></div>
+        <button class="btn small" id="showUnlock" type="button">It's my birthday</button>
+      </div>
+
+      <div class="panel" data-for="unlock">
+        <form class="share" id="unlockForm">
+          <label for="code">Enter your birthday code</label>
+          <div class="share-row">
+            <input id="code" type="text" placeholder="Code from your planner" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            <button class="btn primary" type="submit">Unlock</button>
+          </div>
+          <p class="note" id="unlockNote" aria-live="polite"></p>
+        </form>
+        <button class="btn" id="cancelUnlock" type="button">Back</button>
+      </div>
+
+      <div class="panel" data-for="intro">
+        <button class="btn primary" id="useMic" type="button"><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><use href="#micIcon"/></svg>Use my microphone</button>
+        <button class="btn" id="useTap" type="button">Tap instead</button>
+        <p class="note" id="introNote">Your audio stays on this device.</p>
+      </div>
+
+      <div class="panel" data-for="listening">
+        <svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><use href="#micIcon"/></svg>
+        <div class="meter" aria-hidden="true"><span id="meterFill"></span></div>
+        <button class="btn" id="switchTap" type="button">Tap to blow instead</button>
+      </div>
+
+      <div class="panel" data-for="tapping">
+        <button class="btn primary big" id="puff" type="button">Blow</button>
+        <button class="btn" id="switchMic" type="button"><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><use href="#micIcon"/></svg>Use my microphone</button>
+      </div>
+
+      <div class="panel" data-for="done">
+        <button class="btn primary" id="readAll" type="button" hidden>Read your messages</button>
+        <button class="btn" id="relight" type="button">Light them again</button>
+      </div>
+
+      <div class="panel" data-for="missing">
+        <a class="btn primary" href="/">Plan a cake</a>
+      </div>
+    </div>
+  </main>
+
+  <dialog id="compose" class="sheet">
+    <form id="composeForm" method="dialog">
+      <h2 id="composeTitle"></h2>
+      <p class="sheet-sub" id="composeSub"></p>
+      <label for="fromName">Your name</label>
+      <input id="fromName" type="text" maxlength="40" required autocomplete="name">
+      <label for="messageText">Your message</label>
+      <textarea id="messageText" rows="4" maxlength="280" required></textarea>
+      <p class="note" id="composeNote" aria-live="polite"></p>
+      <div class="sheet-actions">
+        <button class="btn" id="composeCancel" type="button">Cancel</button>
+        <button class="btn primary" id="composeSend" type="submit">Put it on the candle</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="reader" class="sheet">
+    <p class="sheet-sub" id="readerCount"></p>
+    <blockquote id="readerText"></blockquote>
+    <p class="reader-from" id="readerFrom"></p>
+    <div class="sheet-actions">
+      <button class="btn" id="readerPrev" type="button">Previous</button>
+      <button class="btn" id="readerNext" type="button">Next</button>
+      <button class="btn primary" id="readerClose" type="button">Close</button>
+    </div>
+  </dialog>
+
+  <canvas id="air" aria-hidden="true"></canvas>
+  <pre id="debug" hidden></pre>
+
+  <script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
+  <script src="/blow.js"></script>
+  <script type="module" src="/party.js"></script>
+</body>
+</html>
