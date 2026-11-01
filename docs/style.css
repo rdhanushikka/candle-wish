@@ -253,6 +253,15 @@ input::placeholder { color: #6c5f66; }
 }
 
 .sheet textarea:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+.welcome { text-align: center; }
+.welcome::backdrop { background: rgba(20, 16, 20, .28); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+.welcome .btn.big { width: 100%; margin-top: 8px; font-size: 1.1rem; min-height: 56px; }
+.welcome .note { margin-top: 12px; }
+.welcome form { text-align: left; }
+.welcome form h2 { text-align: center; margin-bottom: 8px; }
+.welcome form .note { margin-top: 2px; text-align: left; }
+.welcome input { width: 100%; }
+
 .sheet-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .sheet .btn:disabled { opacity: .45; cursor: default; }
 

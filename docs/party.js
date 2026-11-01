@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 const stage = $("stage");
 const partyId = new URLSearchParams(location.search).get("id") || "";
 const tokenKey = `candle-wish-token-${partyId}`;
+const watchKey = `candle-wish-watching-${partyId}`;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const DEBUG = new URLSearchParams(location.search).has("debug");
 
@@ -235,7 +236,7 @@ function showAudience() {
   } else {
     setHeadline(`Waiting for ${config.name}`, "The candles will go out here when they blow.");
   }
-  setState(stage.dataset.state === "unlock" ? "unlock" : "audience");
+  setState("audience");
 }
 
 function applyRemoteState(state) {
@@ -562,15 +563,23 @@ $("switchTap").addEventListener("click", () => startTapping());
 $("puff").addEventListener("click", () => { tapGust = 1; });
 $("relight").addEventListener("click", relightAll);
 
-$("showUnlock").addEventListener("click", () => {
-  setState("unlock");
-  $("code").focus();
-});
-
-$("cancelUnlock").addEventListener("click", () => {
+function showWelcome(view) {
+  $("welcomeChoose").hidden = view !== "choose";
+  $("unlockForm").hidden = view !== "code";
   $("unlockNote").textContent = "";
-  setState("audience");
+  if (!$("welcome").open) $("welcome").showModal();
+  (view === "code" ? $("code") : $("chooseBirthday")).focus();
+}
+
+$("showUnlock").addEventListener("click", () => showWelcome("code"));
+$("chooseBirthday").addEventListener("click", () => showWelcome("code"));
+$("cancelUnlock").addEventListener("click", () => showWelcome("choose"));
+$("chooseWatch").addEventListener("click", () => {
+  sessionStorage.setItem(watchKey, "true");
+  $("welcome").close();
 });
+// The overlay is a required choice, so Escape doesn't dismiss it.
+$("welcome").addEventListener("cancel", (event) => event.preventDefault());
 
 $("unlockForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -584,6 +593,7 @@ $("unlockForm").addEventListener("submit", async (event) => {
     localStorage.setItem(tokenKey, token);
     $("code").value = "";
     $("unlockNote").textContent = "";
+    $("welcome").close();
     becomeStar();
   } catch (err) {
     $("unlockNote").textContent = err.message;
@@ -637,6 +647,8 @@ async function init() {
     else showIntro();
   } else {
     showAudience();
+    $("welcomeTitle").textContent = `${config.name}'s birthday`;
+    if (!sessionStorage.getItem(watchKey)) showWelcome("choose");
   }
 
   const applyLive = (live) => {

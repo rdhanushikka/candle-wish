@@ -121,7 +121,7 @@ function showForm() {
   $("shareCard").hidden = true;
   $("planForm").hidden = false;
   $("save").textContent = party ? "Save changes" : "Create the cake";
-  $("heroQuiet").textContent = "Everyone gets a candle.";
+  $("heroQuiet").textContent = "Every candle can hold a message.";
   updateHero();
 }
 

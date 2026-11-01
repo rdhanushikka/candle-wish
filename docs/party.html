@@ -34,18 +34,6 @@
         <button class="btn small" id="showUnlock" type="button">It's my birthday</button>
       </div>
 
-      <div class="panel" data-for="unlock">
-        <form class="share" id="unlockForm">
-          <label for="code">Enter your birthday code</label>
-          <div class="share-row">
-            <input id="code" type="text" placeholder="Code from your planner" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false">
-            <button class="btn primary" type="submit">Unlock</button>
-          </div>
-          <p class="note" id="unlockNote" aria-live="polite"></p>
-        </form>
-        <button class="btn" id="cancelUnlock" type="button">Back</button>
-      </div>
-
       <div class="panel" data-for="intro">
         <button class="btn primary" id="useMic" type="button"><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><use href="#micIcon"/></svg>Use my microphone</button>
         <button class="btn" id="useTap" type="button">Tap instead</button>
@@ -73,6 +61,26 @@
       </div>
     </div>
   </main>
+
+  <dialog id="welcome" class="sheet welcome" aria-labelledby="welcomeTitle">
+    <div id="welcomeChoose">
+      <h2 id="welcomeTitle"></h2>
+      <p class="sheet-sub">How are you joining?</p>
+      <button class="btn primary big" id="chooseBirthday" type="button">It's my birthday</button>
+      <button class="btn big" id="chooseWatch" type="button">I'm here to watch</button>
+      <p class="note">Watch the candles live and leave a message on one.</p>
+    </div>
+    <form id="unlockForm" hidden>
+      <h2>Happy birthday!</h2>
+      <label for="code">Enter the code from your planner</label>
+      <input id="code" type="text" placeholder="Your code" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <p class="note" id="unlockNote" aria-live="polite"></p>
+      <div class="sheet-actions">
+        <button class="btn" id="cancelUnlock" type="button">Back</button>
+        <button class="btn primary" type="submit">Unlock</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="compose" class="sheet">
     <form id="composeForm" method="dialog">
