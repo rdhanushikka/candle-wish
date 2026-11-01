@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mic test</title>
+<style>
+  body { font: 18px system-ui, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 20px; color: #141014; background: #fde9ee; }
+  h1 { margin: 0 0 16px; }
+  button { font: 600 18px system-ui; padding: 12px 24px; border-radius: 99px; border: 3px solid #141014; background: #141014; color: #fff; cursor: pointer; }
+  #prompt { font-size: 44px; font-weight: 700; min-height: 60px; margin: 20px 0 10px; }
+  #bar { height: 22px; border: 3px solid #141014; border-radius: 99px; background: #fff; overflow: hidden; margin-bottom: 20px; }
+  #fill { height: 100%; width: 0; background: #e8588c; }
+  pre { background: #141014; color: #fff; padding: 14px; border-radius: 10px; font-size: 13px; overflow-x: auto; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Mic test</h1>
+<button id="start" type="button">Start test</button>
+<div id="prompt"></div>
+<div id="bar"><div id="fill"></div></div>
+<button id="copy" type="button" hidden>Copy results</button>
+<pre id="out" hidden></pre>
+<script src="blow.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const PHASES = [["Stay quiet", 4], ["BLOW NOW", 4], ["Talk normally", 4]];
+const BANDS = [[30, 200], [200, 500], [500, 1500], [1500, 4000], [4000, 8000]];
+const pct = (values, p) => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+};
+
+function bandDb(d) {
+  const hz = d.ctx.sampleRate / BlowDetector.FFT_SIZE;
+  return BANDS.map(([lo, hi]) => {
+    let sum = 0, n = 0;
+    for (let i = Math.round(lo / hz); i <= Math.round(hi / hz) && i < d.spectrum.length; i++) {
+      sum += 10 ** (Math.max(d.spectrum[i], -140) / 10); n++;
+    }
+    return 10 * Math.log10(sum / Math.max(n, 1) + 1e-14);
+  });
+}
+
+async function run() {
+  $("start").hidden = true;
+  $("prompt").textContent = "Allow the mic...";
+  const d = new BlowDetector();
+  try {
+    await d.start();
+  } catch (err) {
+    $("prompt").textContent = "Mic failed";
+    $("out").hidden = false;
+    $("out").textContent = `start failed: ${err.name}: ${err.message}`;
+    return;
+  }
+  const track = d.stream.getAudioTracks()[0];
+  const set = track.getSettings();
+  const lines = [
+    `mic: ${track.label}`,
+    `muted ${track.muted}  ctx ${d.ctx.state}  rate ${d.ctx.sampleRate}`,
+    `echo ${set.echoCancellation}  noise ${set.noiseSuppression}  agc ${set.autoGainControl}`,
+    "",
+  ];
+
+  let last = performance.now();
+  const step = (dt) => { const r = d.update(dt); $("fill").style.width = `${Math.max(0, Math.min(100, (20 * Math.log10(Math.max(r.rms, 1e-6)) + 60) * 2))}%`; return r; };
+
+  await new Promise((done) => {
+    const start = last;
+    (function wait(now) {
+      step(Math.min(0.05, (now - last) / 1000)); last = now;
+      $("prompt").textContent = "Get ready...";
+      now - start > 2000 ? done() : requestAnimationFrame(wait);
+    })(performance.now());
+  });
+
+  for (const [name, seconds] of PHASES) {
+    const rows = [], bands = BANDS.map(() => []), loud = [];
+    const begin = performance.now();
+    await new Promise((done) => {
+      (function frame(now) {
+        const r = step(Math.min(0.05, (now - last) / 1000)); last = now;
+        rows.push(r);
+        const db = bandDb(d);
+        db.forEach((v, i) => bands[i].push(v));
+        if (r.rms > 0.02) loud.push({ noisy: r.noisiness, rumble: db[0] - db[1], mid: db[1] - db[2], rms: r.rms });
+        const left = Math.ceil(seconds - (now - begin) / 1000);
+        $("prompt").textContent = `${name} (${left})`;
+        now - begin > seconds * 1000 ? done() : requestAnimationFrame(frame);
+      })(performance.now());
+    });
+    const col = (k) => rows.map((r) => r[k]);
+    const fmt = (k, n = 3) => `p10 ${pct(col(k), .1).toFixed(n)}  med ${pct(col(k), .5).toFixed(n)}  p90 ${pct(col(k), .9).toFixed(n)}  max ${Math.max(...col(k)).toFixed(n)}`;
+    lines.push(`--- ${name} (${rows.length} frames)`);
+    lines.push(`rms    ${fmt("rms")}`);
+    lines.push(`low    ${fmt("lowRatio", 2)}`);
+    lines.push(`noisy  ${fmt("noisiness", 2)}`);
+    lines.push(`thresh ${fmt("threshold")}`);
+    lines.push(`candidate ${(100 * rows.filter((r) => r.candidate).length / rows.length).toFixed(0)}%  max strength ${Math.max(...col("strength")).toFixed(2)}`);
+    lines.push(`band dB ${BANDS.map(([lo, hi], i) => `${lo}-${hi}: ${pct(bands[i], .5).toFixed(0)}`).join("  ")}`);
+    const loudFmt = (k, n = 2) => { const v = loud.map((f) => f[k]); return `p10 ${pct(v, .1).toFixed(n)}  med ${pct(v, .5).toFixed(n)}  p90 ${pct(v, .9).toFixed(n)}`; };
+    lines.push(`LOUD frames only: ${loud.length}`);
+    lines.push(`  rms    ${loudFmt("rms", 3)}`);
+    lines.push(`  noisy  ${loudFmt("noisy")}`);
+    lines.push(`  rumble ${loudFmt("rumble", 1)}   (30-200 dB minus 200-500 dB)`);
+    lines.push(`  mid    ${loudFmt("mid", 1)}   (200-500 dB minus 500-1500 dB)`);
+    lines.push("");
+  }
+  d.stop();
+  $("fill").style.width = 0;
+  $("prompt").textContent = "Done";
+  $("out").hidden = false;
+  $("out").textContent = lines.join("\n");
+  $("copy").hidden = false;
+}
+
+$("start").addEventListener("click", run);
+$("copy").addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("out").textContent);
+  $("copy").textContent = "Copied";
+});
+</script>
+</body>
+</html>

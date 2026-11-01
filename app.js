@@ -230,6 +230,8 @@ const birthdayLine = `Happy ${age > 0 && age < 150 ? `${ordinal(age)} ` : ""}Bir
 let detector = null;
 let tapGust = 0;
 let finishAt = 0;
+let micWarned = false;
+let debugPeak = { rms: 0, until: 0 };
 let last = performance.now();
 
 function showIntro() {
@@ -311,8 +313,17 @@ function tick(now) {
   wind += (gust - wind) * Math.min(1, dt * (gust > wind ? 14 : 3));
 
   if (reading) {
-    const level = Math.min(1, Math.max(reading.strength, reading.rms * 3));
+    // Decibel scale, so a quiet mic still moves the bar.
+    const loudness = (20 * Math.log10(Math.max(reading.rms, 1e-6)) + 60) / 50;
+    const level = Math.min(1, Math.max(reading.strength, loudness, 0));
     $("meterFill").style.transform = `scaleX(${level.toFixed(3)})`;
+    if (reading.silent) {
+      $("sub").textContent = "No sound from your mic. Check your browser and Mac settings.";
+      micWarned = true;
+    } else if (micWarned) {
+      $("sub").textContent = "Blow toward your microphone.";
+      micWarned = false;
+    }
     if (reading.noisyRoom && !stage.dataset.noisyShown) {
       stage.dataset.noisyShown = "true";
       $("sub").textContent = "It's noisy here. Blow close to the mic, or tap instead.";
@@ -324,8 +335,8 @@ function tick(now) {
       if (c.relightAt && now < c.relightAt) continue;
       c.relightAt = 0;
       c.grow = Math.min(1, c.grow + dt * 3.5);
-      const burn = Math.max(0, gust - 0.18) * 2.6 * (1 / c.toughness);
-      c.life = burn > 0 ? c.life - burn * dt : Math.min(1, c.life + dt * 0.5);
+      const burn = Math.max(0, gust - 0.12) * 3.5 * (1 / c.toughness);
+      c.life = burn > 0 ? c.life - burn * dt : Math.min(1, c.life + dt * 0.25);
       if (c.life <= 0 && stage.dataset.state !== "done") blowOut(c);
     } else {
       c.grow = Math.max(0, c.grow - dt * 9);
@@ -343,11 +354,13 @@ function tick(now) {
   drawAir(dt, time);
 
   if (DEBUG && reading) {
+    if (reading.rms > debugPeak.rms || now > debugPeak.until) debugPeak = { ...reading, until: now + 4000 };
     $("debug").hidden = false;
     $("debug").textContent =
       `rms ${reading.rms.toFixed(3)}  threshold ${reading.threshold.toFixed(3)}  floor ${reading.floor.toFixed(3)}\n` +
       `low ${reading.lowRatio.toFixed(2)} (> ${BlowDetector.MIN_LOW_RATIO})  noisy ${reading.noisiness.toFixed(2)} (> ${BlowDetector.MIN_NOISINESS})\n` +
-      `candidate ${reading.candidate}  strength ${reading.strength.toFixed(2)}`;
+      `candidate ${reading.candidate}  strength ${reading.strength.toFixed(2)}\n` +
+      `loudest in last 4s: rms ${debugPeak.rms.toFixed(3)}  low ${debugPeak.lowRatio.toFixed(2)}  noisy ${debugPeak.noisiness.toFixed(2)}`;
   }
 
   requestAnimationFrame(tick);

@@ -4,21 +4,24 @@
 class BlowDetector {
   static FFT_SIZE = 4096;
   static MIN_THRESHOLD = 0.02;  // quietest RMS that can count as a blow
-  static FLOOR_MULTIPLE = 2.5;  // how far above room noise a blow must be
-  static FULL_SCALE_DB = 24;    // dB above threshold that counts as full strength
-  static MIN_LOW_RATIO = 0.55;  // share of energy below 800 Hz; rejects "shhh"
-  static MIN_NOISINESS = 0.3;   // flatness of the spectrum; rejects voices and music
+  static FLOOR_MULTIPLE = 3;    // how far above room noise a blow must be
+  static FULL_SCALE_DB = 18;    // dB above threshold that counts as full strength
+  static MIN_LOW_RATIO = 0.1;   // share of energy below 1500 Hz; rejects "shhh"
+  static MIN_NOISINESS = 0.2;   // flatness of the spectrum; rejects voices and music
   static HOLD_SECONDS = 0.3;
   static CALIBRATE_SECONDS = 0.5;
   static NOISY_ROOM_FLOOR = 0.06;
+  static SILENT_RMS = 0.0002;
+  static SILENT_SECONDS = 2;
 
   constructor() {
-    this.reading = { strength: 0, rms: 0, lowRatio: 0, noisiness: 0, floor: 0, threshold: 0, candidate: false, noisyRoom: false };
+    this.reading = { strength: 0, rms: 0, lowRatio: 0, noisiness: 0, floor: 0, threshold: 0, candidate: false, noisyRoom: false, silent: false };
     this.held = 0;
     this.strength = 0;
     this.elapsed = 0;
     this.calibration = [];
     this.floor = 0;
+    this.silentFor = 0;
   }
 
   // Call from a user gesture so the audio context is allowed to start.
@@ -57,6 +60,7 @@ class BlowDetector {
 
     const rms = Math.sqrt(this.samples.reduce((sum, s) => sum + s * s, 0) / this.samples.length);
     this.elapsed += dt;
+    this.silentFor = rms < BlowDetector.SILENT_RMS ? this.silentFor + dt : 0;
 
     if (this.elapsed < BlowDetector.CALIBRATE_SECONDS) {
       this.calibration.push(rms);
@@ -86,6 +90,7 @@ class BlowDetector {
     this.reading = {
       strength: this.strength, rms, lowRatio, noisiness, floor: this.floor, threshold, candidate,
       noisyRoom: this.floor > BlowDetector.NOISY_ROOM_FLOOR,
+      silent: this.silentFor > BlowDetector.SILENT_SECONDS,
     };
     return this.reading;
   }
@@ -99,7 +104,7 @@ class BlowDetector {
     for (let i = bin(30); i <= bin(8000); i++) {
       const p = power(this.spectrum[i]);
       total += p;
-      if (i <= bin(800)) low += p;
+      if (i <= bin(1500)) low += p;
     }
 
     return { lowRatio: total > 0 ? low / total : 0, noisiness: this.flatness(bin(80), bin(1000)) };
