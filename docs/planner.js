@@ -1,4 +1,5 @@
-import { CakeScene } from "/cake3d.js";
+import { api } from "./api.js";
+import { CakeScene } from "./cake3d.js";
 
 const $ = (id) => document.getElementById(id);
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -95,11 +96,12 @@ function animate(now) {
 }
 
 function showShare(code) {
-  const { origin } = location;
-  $("partyLink").value = `${origin}/p/${party.id}`;
+  const base = new URL("./", location.href).href;
+  const plannerPath = `index.html?plan=${party.id}&key=${party.planKey}`;
+  $("partyLink").value = `${base}party.html?id=${party.id}`;
   $("birthdayCode").value = code;
-  $("plannerLink").value = `${origin}/plan/${party.id}?key=${party.planKey}`;
-  $("openParty").href = `/p/${party.id}`;
+  $("plannerLink").value = base + plannerPath;
+  $("openParty").href = `party.html?id=${party.id}`;
   $("planForm").hidden = true;
   $("shareCard").hidden = false;
   const name = $("name").value.trim();
@@ -108,7 +110,7 @@ function showShare(code) {
   $("heroName").textContent = `${name}'s`;
   $("heroTail").textContent = "cake is ready.";
   $("heroQuiet").textContent = "Now share it.";
-  history.replaceState(null, "", `/plan/${party.id}?key=${party.planKey}`);
+  history.replaceState(null, "", plannerPath);
 }
 
 function showMessageCount(count) {
@@ -130,23 +132,12 @@ $("planForm").addEventListener("submit", async (event) => {
   $("planNote").textContent = "Saving...";
   $("save").disabled = true;
   try {
-    const res = await fetch(party ? `/api/parties/${party.id}` : "/api/parties", {
-      method: party ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json", "X-Plan-Key": party?.planKey || "" },
-      body: JSON.stringify(readForm()),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      $("planNote").textContent = data.error;
-      return;
-    }
-    if (!party) {
-      party = { id: data.id, planKey: data.planKey, code: data.code };
-    }
+    if (party) await api.updateParty(party.id, party.planKey, readForm());
+    else party = await api.createParty(readForm());
     $("planNote").textContent = "";
     showShare(party.code);
-  } catch {
-    $("planNote").textContent = "Couldn't save the cake. Try again.";
+  } catch (err) {
+    $("planNote").textContent = err.message;
   } finally {
     $("save").disabled = false;
   }
@@ -169,17 +160,17 @@ document.querySelectorAll("[data-copy]").forEach((button) => {
 });
 
 async function loadExisting() {
-  const match = location.pathname.match(/^\/plan\/([\w-]+)$/);
-  if (!match) return;
-  const planKey = new URLSearchParams(location.search).get("key") || "";
-  const res = await fetch(`/api/parties/${match[1]}/plan`, { headers: { "X-Plan-Key": planKey } });
-  if (!res.ok) {
+  const params = new URLSearchParams(location.search);
+  const id = params.get("plan");
+  if (!id) return;
+  const planKey = params.get("key") || "";
+  const data = await api.readPlan(id, planKey).catch(() => null);
+  if (!data) {
     $("planNote").textContent = "That planner link isn't valid, so this will make a new cake.";
-    history.replaceState(null, "", "/");
+    history.replaceState(null, "", "index.html");
     return;
   }
-  const data = await res.json();
-  party = { id: match[1], planKey, code: data.code };
+  party = { id, planKey, code: data.code };
   showMessageCount(data.messageCount);
   fillForm(data.config);
   renderPreview();

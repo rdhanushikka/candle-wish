@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -69,7 +69,7 @@
       </div>
 
       <div class="panel" data-for="missing">
-        <a class="btn primary" href="/">Plan a cake</a>
+        <a class="btn primary" href="./">Plan a cake</a>
       </div>
     </div>
   </main>
@@ -104,8 +104,10 @@
   <canvas id="air" aria-hidden="true"></canvas>
   <pre id="debug" hidden></pre>
 
-  <script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
-  <script src="/blow.js"></script>
-  <script type="module" src="/party.js"></script>
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+  <script src="blow.js"></script>
+  <script src="vendor/supabase.js"></script>
+  <script src="config.js"></script>
+  <script type="module" src="party.js"></script>
 </body>
 </html>

@@ -1,8 +1,9 @@
-import { CakeScene } from "/cake3d.js";
+import { api } from "./api.js";
+import { CakeScene } from "./cake3d.js";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage");
-const partyId = location.pathname.split("/").pop();
+const partyId = new URLSearchParams(location.search).get("id") || "";
 const tokenKey = `candle-wish-token-${partyId}`;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const DEBUG = new URLSearchParams(location.search).has("debug");
@@ -15,6 +16,7 @@ let taken = new Map();
 let messages = [];
 let readerIndex = 0;
 let composeCandle = null;
+let myCandle = null;
 let serverStage = "waiting";
 let birthdayLine = "";
 let wishLine = "";
@@ -237,10 +239,10 @@ function showAudience() {
 }
 
 function applyRemoteState(state) {
+  if (role === "star") return;
   const previous = serverStage;
   serverStage = state.stage;
   remoteGust = state.gust;
-  if (role === "star") return;
 
   candles.forEach((c, i) => {
     if (c.lit && !state.lit[i]) blowOut(c);
@@ -278,16 +280,14 @@ function markDirty(nextStage) {
 function syncStarState(now) {
   if (role !== "star" || stateInFlight) return;
   const gust = Math.round(starGust * 100) / 100;
-  if (!stateDirty && (gust === lastSentGust || now - lastSentAt < 100)) return;
+  if (!stateDirty && (gust === lastSentGust || now - lastSentAt < 200)) return;
   stateDirty = false;
   stateInFlight = true;
   lastSentAt = now;
   lastSentGust = gust;
-  fetch(`/api/parties/${partyId}/state`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Star-Token": localStorage.getItem(tokenKey) || "" },
-    body: JSON.stringify({ stage: serverStage, lit: candles.map((c) => c.lit), gust }),
-  }).catch(() => { stateDirty = true; }).finally(() => { stateInFlight = false; });
+  api.setState(partyId, localStorage.getItem(tokenKey) || "", { stage: serverStage, lit: candles.map((c) => c.lit), gust })
+    .catch(() => { stateDirty = true; })
+    .finally(() => { stateInFlight = false; });
 }
 
 function showIntro() {
@@ -382,9 +382,8 @@ function applyTaken(list) {
 
 function updateMessageNotes() {
   const free = candles.length - taken.size;
-  $("pickNote").textContent = free
-    ? `Pick a candle and leave ${config.name} a message.`
-    : "Every candle has a message.";
+  if (myCandle !== null) $("pickNote").textContent = `Your message is on candle ${myCandle + 1}.`;
+  else $("pickNote").textContent = free ? `Pick a candle and leave ${config.name} a message.` : "Every candle has a message.";
   const count = taken.size;
   const noun = count === 1 ? "message" : "messages";
   $("introNote").textContent = count
@@ -395,10 +394,7 @@ function updateMessageNotes() {
 }
 
 async function loadMessages() {
-  const res = await fetch(`/api/parties/${partyId}/messages`, {
-    headers: { "X-Star-Token": localStorage.getItem(tokenKey) || "" },
-  });
-  if (res.ok) messages = (await res.json()).messages;
+  messages = await api.readMessages(partyId, localStorage.getItem(tokenKey) || "").catch(() => messages);
 }
 
 function pickCandle(index) {
@@ -458,22 +454,13 @@ $("composeForm").addEventListener("submit", async (event) => {
   $("composeSend").disabled = true;
   $("composeNote").textContent = "Sending...";
   try {
-    const res = await fetch(`/api/parties/${partyId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ candle: composeCandle, from: $("fromName").value, text: $("messageText").value }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      $("composeNote").textContent = data.error;
-      return;
-    }
-    const placed = composeCandle;
+    await api.addMessage(partyId, composeCandle, $("fromName").value, $("messageText").value);
+    myCandle = composeCandle;
     $("messageText").value = "";
     closeCompose();
-    $("pickNote").textContent = `Your message is on candle ${placed + 1}.`;
-  } catch {
-    $("composeNote").textContent = "Couldn't send it. Try again.";
+    updateMessageNotes();
+  } catch (err) {
+    $("composeNote").textContent = err.message;
   } finally {
     $("composeSend").disabled = false;
   }
@@ -589,22 +576,17 @@ $("unlockForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   $("unlockNote").textContent = "Checking...";
   try {
-    const res = await fetch(`/api/parties/${partyId}/unlock`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: $("code").value }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      $("unlockNote").textContent = data.error;
+    const token = await api.unlock(partyId, $("code").value);
+    if (!token) {
+      $("unlockNote").textContent = "That code isn't right.";
       return;
     }
-    localStorage.setItem(tokenKey, data.token);
+    localStorage.setItem(tokenKey, token);
     $("code").value = "";
     $("unlockNote").textContent = "";
     becomeStar();
-  } catch {
-    $("unlockNote").textContent = "Couldn't check the code. Try again.";
+  } catch (err) {
+    $("unlockNote").textContent = err.message;
   }
 });
 
@@ -615,15 +597,15 @@ async function init() {
   makePetals();
   addEventListener("resize", () => { resizeAir(); makePetals(); });
 
-  let data;
+  let data = null;
+  let problem = "Check your link, or plan a new one.";
   try {
-    const res = await fetch(`/api/parties/${partyId}`, {
-      headers: { "X-Star-Token": localStorage.getItem(tokenKey) || "" },
-    });
-    if (!res.ok) throw new Error(String(res.status));
-    data = await res.json();
-  } catch {
-    setHeadline("This cake doesn't exist", "Check your link, or plan a new one.");
+    data = await api.readParty(partyId, localStorage.getItem(tokenKey) || "");
+  } catch (err) {
+    problem = err.message;
+  }
+  if (!data) {
+    setHeadline("We couldn't find this cake", problem);
     setState("missing");
     requestAnimationFrame(tick);
     return;
@@ -657,12 +639,17 @@ async function init() {
     showAudience();
   }
 
-  const events = new EventSource(`/api/parties/${partyId}/events`);
-  events.addEventListener("state", (event) => applyRemoteState(JSON.parse(event.data)));
-  events.addEventListener("config", () => location.reload());
-  events.addEventListener("taken", (event) => {
-    applyTaken(JSON.parse(event.data).taken);
-    if (role === "star") loadMessages();
+  const applyLive = (live) => {
+    if (live.revision !== data.revision) return location.reload();
+    applyRemoteState(live.state);
+    const changed = JSON.stringify(live.taken) !== JSON.stringify([...taken].map(([candle, from]) => ({ candle, from })));
+    applyTaken(live.taken);
+    if (changed && role === "star") loadMessages();
+  };
+  api.watch(data.liveKey, applyLive, async () => {
+    // Catches up on anything missed while connecting or offline.
+    const latest = await api.readParty(partyId, localStorage.getItem(tokenKey) || "").catch(() => null);
+    if (latest) applyLive(latest);
   });
 
   requestAnimationFrame(tick);

@@ -1,7 +1,0 @@
-{
-  "name": "candle-wish",
-  "private": true,
-  "description": "Virtual birthday cakes you blow out with your microphone",
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=18" }
-}
