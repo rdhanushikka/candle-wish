@@ -1,14 +1,18 @@
 // Decides whether the mic is hearing someone blow.
 // A blow is loud, weighted toward low frequencies, noisy rather than tonal,
-// and sustained for about 0.3 seconds.
+// and sustained for a moment. Soft breath comes in bursts, so short gaps are forgiven.
 class BlowDetector {
   static FFT_SIZE = 4096;
-  static MIN_THRESHOLD = 0.02;  // quietest RMS that can count as a blow
+  static MIN_THRESHOLD = 0.012; // quietest RMS that can count as a blow
   static FLOOR_MULTIPLE = 3;    // how far above room noise a blow must be
-  static FULL_SCALE_DB = 18;    // dB above threshold that counts as full strength
+  static FULL_SCALE_DB = 12;    // dB above threshold that counts as full strength
   static MIN_LOW_RATIO = 0.1;   // share of energy below 1500 Hz; rejects "shhh"
   static MIN_NOISINESS = 0.2;   // flatness of the spectrum; rejects voices and music
-  static HOLD_SECONDS = 0.3;
+  static HOLD_SECONDS = 0.15;
+  static HOLD_DECAY = 0.75;     // how fast the hold drains between bursts of breath
+  static MIN_GUST = 0.05;       // gusts below this leave a candle alone
+  static BURN_RATE = 5;         // candle life lost per second at full strength
+  static RECOVER_RATE = 0.05;   // life regained per second, so breathing in costs little
   static CALIBRATE_SECONDS = 0.5;
   static NOISY_ROOM_FLOOR = 0.06;
   static SILENT_RMS = 0.0002;
@@ -73,13 +77,14 @@ class BlowDetector {
     const { lowRatio, noisiness } = this.analyzeSpectrum();
     const candidate = rms > threshold && lowRatio > BlowDetector.MIN_LOW_RATIO && noisiness > BlowDetector.MIN_NOISINESS;
 
-    // Follow room noise: drop quickly, rise slowly so a blow barely moves it.
-    const tau = rms < this.floor ? 0.3 : candidate ? 10 : 3;
+    // Follow room noise: drop quickly, rise slowly, and barely move for anything
+    // above the threshold so a long blow doesn't raise the bar against itself.
+    const tau = rms < this.floor ? 0.3 : rms > threshold ? 30 : 3;
     this.floor += (rms - this.floor) * Math.min(1, dt / tau);
 
     this.held = candidate
       ? Math.min(BlowDetector.HOLD_SECONDS + 0.2, this.held + dt)
-      : Math.max(0, this.held - dt * 1.5);
+      : Math.max(0, this.held - dt * BlowDetector.HOLD_DECAY);
 
     const db = 20 * Math.log10(Math.max(rms, 1e-6) / threshold);
     const target = candidate && this.held >= BlowDetector.HOLD_SECONDS
@@ -93,6 +98,11 @@ class BlowDetector {
       silent: this.silentFor > BlowDetector.SILENT_SECONDS,
     };
     return this.reading;
+  }
+
+  // How much candle life a gust removes per second.
+  static burn(gust, toughness) {
+    return Math.max(0, gust - BlowDetector.MIN_GUST) * BlowDetector.BURN_RATE / toughness;
   }
 
   analyzeSpectrum() {

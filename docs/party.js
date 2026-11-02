@@ -309,9 +309,13 @@ async function startMic() {
   $("useMic").disabled = true;
   $("sub").textContent = "Your browser will ask to use the microphone.";
   stopMic();
-  detector = new BlowDetector();
+  const listener = detector = new BlowDetector();
   try {
-    await detector.start();
+    await listener.start();
+    // Say "blow" only after the mic has measured the room, or the blow reads as room noise.
+    $("sub").textContent = "Take a breath.";
+    await new Promise((done) => setTimeout(done, (BlowDetector.CALIBRATE_SECONDS + 0.1) * 1000));
+    if (detector !== listener) return;
     setHeadline("Now blow!", "Blow toward your microphone.");
     setState("listening");
     markDirty("blowing");
@@ -519,8 +523,8 @@ function tick(now) {
       c.relightAt = 0;
       c.grow = Math.min(1, c.grow + dt * 3.5);
       if (isStar) {
-        const burn = Math.max(0, gust - 0.12) * 3.5 * (1 / c.toughness);
-        c.life = burn > 0 ? c.life - burn * dt : Math.min(1, c.life + dt * 0.25);
+        const burn = BlowDetector.burn(gust, c.toughness);
+        c.life = burn > 0 ? c.life - burn * dt : Math.min(1, c.life + dt * BlowDetector.RECOVER_RATE);
         if (c.life <= 0 && !done) {
           blowOut(c);
           markDirty();

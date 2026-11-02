@@ -24,7 +24,8 @@
 <script src="blow.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const PHASES = [["Stay quiet", 4], ["BLOW NOW", 4], ["Talk normally", 4]];
+const PHASES = [["Stay quiet", 4], ["Blow gently", 4], ["BLOW NOW", 4], ["Sing Happy Birthday out loud", 6]];
+const TOUGHEST = 1.25;
 const BANDS = [[30, 200], [200, 500], [500, 1500], [1500, 4000], [4000, 8000]];
 const pct = (values, p) => {
   if (!values.length) return 0;
@@ -78,11 +79,18 @@ async function run() {
 
   for (const [name, seconds] of PHASES) {
     const rows = [], bands = BANDS.map(() => []), loud = [];
+    let life = 1, outAt = null, aboveFor = 0, bursts = 0, wasAbove = false;
     const begin = performance.now();
     await new Promise((done) => {
       (function frame(now) {
-        const r = step(Math.min(0.05, (now - last) / 1000)); last = now;
+        const dt = Math.min(0.05, (now - last) / 1000); last = now;
+        const r = step(dt);
         rows.push(r);
+        if (r.candidate) { aboveFor += dt; if (!wasAbove) bursts++; }
+        wasAbove = r.candidate;
+        const burn = BlowDetector.burn(r.strength, TOUGHEST);
+        life = burn > 0 ? life - burn * dt : Math.min(1, life + BlowDetector.RECOVER_RATE * dt);
+        if (life <= 0 && outAt === null) outAt = (now - begin) / 1000;
         const db = bandDb(d);
         db.forEach((v, i) => bands[i].push(v));
         if (r.rms > 0.02) loud.push({ noisy: r.noisiness, rumble: db[0] - db[1], mid: db[1] - db[2], rms: r.rms });
@@ -99,6 +107,8 @@ async function run() {
     lines.push(`noisy  ${fmt("noisiness", 2)}`);
     lines.push(`thresh ${fmt("threshold")}`);
     lines.push(`candidate ${(100 * rows.filter((r) => r.candidate).length / rows.length).toFixed(0)}%  max strength ${Math.max(...col("strength")).toFixed(2)}`);
+    lines.push(`counted as blowing: ${aboveFor.toFixed(1)}s in ${bursts} bursts`);
+    lines.push(`toughest candle: ${outAt === null ? `still lit, ${(100 * Math.max(0, life)).toFixed(0)}% left` : `out after ${outAt.toFixed(1)}s`}`);
     lines.push(`band dB ${BANDS.map(([lo, hi], i) => `${lo}-${hi}: ${pct(bands[i], .5).toFixed(0)}`).join("  ")}`);
     const loudFmt = (k, n = 2) => { const v = loud.map((f) => f[k]); return `p10 ${pct(v, .1).toFixed(n)}  med ${pct(v, .5).toFixed(n)}  p90 ${pct(v, .9).toFixed(n)}`; };
     lines.push(`LOUD frames only: ${loud.length}`);
