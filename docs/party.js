@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { CakeScene } from "./cake3d.js";
+import { Recorder, MAX_SECONDS, seal, unseal } from "./media.js";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage");
@@ -18,6 +19,12 @@ let messages = [];
 let readerIndex = 0;
 let composeCandle = null;
 let myCandle = null;
+let recorder = null;
+let recording = null;
+let recordingUrl = null;
+let recordTimer = 0;
+let readerUrl = null;
+let readerLoad = 0;
 let serverStage = "waiting";
 let birthdayLine = "";
 let wishLine = "";
@@ -379,7 +386,7 @@ function applyTaken(list) {
   [...$("chips").children].forEach((chip, i) => {
     const from = taken.get(i);
     chip.classList.toggle("taken", from !== undefined);
-    chip.setAttribute("aria-label", from !== undefined ? `Candle ${i + 1}, ${from} wrote here` : `Candle ${i + 1}, free`);
+    chip.setAttribute("aria-label", from !== undefined ? `Candle ${i + 1}, ${from} left a message here` : `Candle ${i + 1}, free`);
   });
   candles.forEach((c) => scene.setMarked(c.index, taken.has(c.index)));
   updateMessageNotes();
@@ -395,7 +402,7 @@ function updateMessageNotes() {
     ? `${count} ${noun} waiting on your candles. Your audio stays on this device.`
     : "Your audio stays on this device.";
   $("readAll").hidden = !count;
-  $("readAll").textContent = `Read your ${count === 1 ? "message" : `${count} messages`}`;
+  $("readAll").textContent = `Open your ${count === 1 ? "message" : `${count} messages`}`;
 }
 
 async function loadMessages() {
@@ -406,13 +413,13 @@ function pickCandle(index) {
   scene.faceCandle(index);
   if (role === "star") return openReaderAt(index);
   if (taken.has(index)) {
-    $("pickNote").textContent = `${taken.get(index)} wrote on candle ${index + 1}. Pick another one.`;
+    $("pickNote").textContent = `${taken.get(index)} left a message on candle ${index + 1}. Pick another one.`;
     return;
   }
   composeCandle = index;
   scene.setHighlight(index);
   $("composeTitle").textContent = `Candle ${index + 1}`;
-  $("composeSub").textContent = `Only ${config.name} can read this.`;
+  $("composeSub").textContent = `Only ${config.name} will get this.`;
   $("composeNote").textContent = "";
   $("compose").showModal();
   ($("fromName").value ? $("messageText") : $("fromName")).focus();
@@ -427,7 +434,7 @@ function closeCompose() {
 function openReaderAt(candle) {
   const found = messages.findIndex((m) => m.candle === candle);
   if (found === -1) {
-    $("sub").textContent = `Nobody has written on candle ${candle + 1} yet.`;
+    $("sub").textContent = `There's no message on candle ${candle + 1} yet.`;
     return;
   }
   readerIndex = found;
@@ -439,6 +446,8 @@ function showMessage() {
   const message = messages[readerIndex];
   $("readerCount").textContent = `Candle ${message.candle + 1}, message ${readerIndex + 1} of ${messages.length}`;
   $("readerText").textContent = message.text;
+  $("readerText").hidden = !message.text;
+  showReaderMedia(message.media);
   $("readerFrom").textContent = `From ${message.from}`;
   $("readerPrev").disabled = readerIndex === 0;
   $("readerNext").disabled = readerIndex === messages.length - 1;
@@ -446,28 +455,184 @@ function showMessage() {
   scene.faceCandle(message.candle);
 }
 
+function clearReaderMedia() {
+  for (const player of [$("readerVideo"), $("readerAudio")]) {
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    player.hidden = true;
+  }
+  if (readerUrl) URL.revokeObjectURL(readerUrl);
+  readerUrl = null;
+  $("readerStatus").textContent = "";
+}
+
+async function showReaderMedia(media) {
+  const load = ++readerLoad;
+  clearReaderMedia();
+  if (!media) return;
+  $("readerStatus").textContent = media.kind === "video" ? "Loading the video..." : "Loading the voice message...";
+  try {
+    const blob = await unseal(api.mediaUrl(media.path), media);
+    if (load !== readerLoad) return;
+    readerUrl = URL.createObjectURL(blob);
+    const player = media.kind === "video" ? $("readerVideo") : $("readerAudio");
+    player.src = readerUrl;
+    player.hidden = false;
+    $("readerStatus").textContent = "";
+  } catch {
+    if (load === readerLoad) $("readerStatus").textContent = "This message didn't load. Check your connection and try again.";
+  }
+}
+
 function closeReader() {
   scene.setHighlight(null);
   $("reader").close();
 }
+
+/* ---------- Recording a message ---------- */
+
+function selectedKind() {
+  return document.querySelector('input[name="kind"]:checked').value;
+}
+
+function clearRecording() {
+  clearInterval(recordTimer);
+  recorder?.close();
+  recorder = null;
+  recording = null;
+  const video = $("recordVideo"), audio = $("recordAudio");
+  video.pause();
+  video.srcObject = null;
+  video.removeAttribute("src");
+  video.hidden = audio.hidden = true;
+  audio.removeAttribute("src");
+  if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+  recordingUrl = null;
+}
+
+function setRecordControls(status, label, disabled = false) {
+  $("composeNote").textContent = "";
+  $("recordStatus").textContent = status;
+  $("recordToggle").textContent = label;
+  $("recordToggle").disabled = disabled;
+}
+
+const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+
+function applyKind() {
+  const kind = selectedKind();
+  clearRecording();
+  $("composeNote").textContent = "";
+  $("writePanel").hidden = kind !== "text";
+  $("recordPanel").hidden = kind === "text";
+  $("messageText").required = kind === "text";
+  if (kind !== "text") prepareRecorder(kind);
+}
+
+async function prepareRecorder(kind) {
+  const mine = recorder = new Recorder(kind);
+  const device = kind === "video" ? "camera and microphone" : "microphone";
+  setRecordControls(`Your browser will ask to use your ${device}.`, "Start recording", true);
+  try {
+    await mine.open();
+    if (recorder !== mine) return mine.close();
+    if (kind === "video") {
+      const video = $("recordVideo");
+      video.srcObject = mine.stream;
+      video.muted = true;
+      video.controls = false;
+      video.classList.add("live");
+      video.hidden = false;
+      video.play().catch(() => {});
+    }
+    setRecordControls(`Up to ${clock(MAX_SECONDS[kind])}.`, "Start recording");
+  } catch {
+    if (recorder !== mine) return;
+    recorder = null;
+    setRecordControls(`Your ${device} isn't available. Check your browser's permissions, or write instead.`, "Try again");
+  }
+}
+
+function startRecording() {
+  const mine = recorder, kind = mine.kind, began = performance.now();
+  const elapsed = () => (performance.now() - began) / 1000;
+  mine.record().then((blob) => {
+    if (recorder !== mine) return;
+    showRecording(mine, blob, Math.min(elapsed(), MAX_SECONDS[kind]));
+  });
+  setRecordControls(`Recording 0:00 of ${clock(MAX_SECONDS[kind])}`, "Stop");
+  recordTimer = setInterval(() => {
+    if (elapsed() >= MAX_SECONDS[kind]) mine.stop();
+    $("recordStatus").textContent = `Recording ${clock(Math.min(elapsed(), MAX_SECONDS[kind]))} of ${clock(MAX_SECONDS[kind])}`;
+  }, 200);
+}
+
+function showRecording(mine, blob, seconds) {
+  clearInterval(recordTimer);
+  mine.close();
+  recorder = null;
+  recording = { blob, seconds: Math.round(seconds * 10) / 10, kind: mine.kind };
+  recordingUrl = URL.createObjectURL(blob);
+  const player = mine.kind === "video" ? $("recordVideo") : $("recordAudio");
+  player.srcObject = null;
+  player.classList.remove("live");
+  player.muted = false;
+  player.controls = true;
+  player.src = recordingUrl;
+  player.hidden = false;
+  setRecordControls(`Recorded ${clock(seconds)}. Play it back, then put it on the candle.`, "Record again");
+}
+
+async function sendRecording(candle) {
+  const { blob, seconds, kind } = recording;
+  const path = await api.beginUpload(partyId, candle, kind);
+  const sealed = await seal(blob);
+  await api.uploadMedia(path, sealed.blob);
+  return { path, key: sealed.key, iv: sealed.iv, type: blob.type.split(";")[0], seconds };
+}
+
+$("kinds").addEventListener("change", applyKind);
+$("recordToggle").addEventListener("click", () => {
+  if (recorder?.recording) recorder.stop();
+  else if (recording) { clearRecording(); prepareRecorder(selectedKind()); }
+  else if (recorder?.stream) startRecording();
+  else prepareRecorder(selectedKind());
+});
+if (!Recorder.supported) $("kinds").classList.add("solo");
+
+$("compose").addEventListener("close", () => {
+  clearRecording();
+  document.querySelector('input[name="kind"][value="text"]').checked = true;
+  $("writePanel").hidden = false;
+  $("recordPanel").hidden = true;
+  $("messageText").required = true;
+});
+$("reader").addEventListener("close", () => { readerLoad++; clearReaderMedia(); });
 
 $("composeCancel").addEventListener("click", closeCompose);
 $("compose").addEventListener("cancel", () => { composeCandle = null; scene.setHighlight(null); });
 
 $("composeForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  $("composeSend").disabled = true;
+  const candle = composeCandle, kind = selectedKind();
+  if (kind !== "text" && !recording) {
+    $("composeNote").textContent = recorder?.recording ? "Stop recording first." : "Record your message first.";
+    return;
+  }
+  $("composeSend").disabled = $("composeCancel").disabled = true;
   $("composeNote").textContent = "Sending...";
   try {
-    await api.addMessage(partyId, composeCandle, $("fromName").value, $("messageText").value);
-    myCandle = composeCandle;
+    if (kind === "text") await api.addMessage(partyId, candle, $("fromName").value, $("messageText").value);
+    else await api.addMessage(partyId, candle, $("fromName").value, "", await sendRecording(candle));
+    myCandle = candle;
     $("messageText").value = "";
     closeCompose();
     updateMessageNotes();
   } catch (err) {
     $("composeNote").textContent = err.message;
   } finally {
-    $("composeSend").disabled = false;
+    $("composeSend").disabled = $("composeCancel").disabled = false;
   }
 });
 
@@ -478,6 +643,11 @@ $("readAll").addEventListener("click", () => {
 });
 $("readerPrev").addEventListener("click", () => { readerIndex--; showMessage(); });
 $("readerNext").addEventListener("click", () => { readerIndex++; showMessage(); });
+for (const player of [$("readerVideo"), $("readerAudio")]) {
+  player.addEventListener("error", () => {
+    if (player.hasAttribute("src")) $("readerStatus").textContent = "This browser can't play this recording. Try opening the link in Chrome.";
+  });
+}
 $("readerClose").addEventListener("click", closeReader);
 $("reader").addEventListener("cancel", () => scene.setHighlight(null));
 
@@ -489,7 +659,8 @@ function tick(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   const time = now / 1000;
-  const reading = detector ? detector.update(dt) : null;
+  // A message playing through the speakers shouldn't count as blowing.
+  const reading = detector && !$("reader").open ? detector.update(dt) : null;
   const isStar = role === "star";
   const done = stage.dataset.state === "done" || stage.dataset.state === "audience-done";
 

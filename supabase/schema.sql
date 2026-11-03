@@ -1,4 +1,5 @@
--- Candle Wish database. Paste this whole file into the Supabase SQL editor and run it once.
+-- Candle Wish database. Paste this whole file into the Supabase SQL editor and run it.
+-- It is safe to run again after this file changes.
 -- Browsers can only call the functions below. They can't read the tables directly,
 -- except party_live, which holds nothing private and is what the live audience listens to.
 
@@ -26,6 +27,19 @@ create table if not exists public.candle_messages (
   primary key (party_id, candle)
 );
 
+alter table public.candle_messages add column if not exists media jsonb;
+
+-- A slot for one voice or video upload. The file itself is encrypted in the sender's
+-- browser, and its path and key only ever leave the database through read_candle_messages.
+create table if not exists public.media_uploads (
+  path text primary key,
+  party_id text not null references public.parties on delete cascade,
+  candle int not null,
+  kind text not null,
+  created_at timestamptz not null default now(),
+  used_at timestamptz
+);
+
 create table if not exists public.rate_limits (
   key text primary key,
   count int not null,
@@ -43,6 +57,7 @@ create table if not exists public.party_live (
 alter table public.parties enable row level security;
 alter table public.star_tokens enable row level security;
 alter table public.candle_messages enable row level security;
+alter table public.media_uploads enable row level security;
 alter table public.rate_limits enable row level security;
 alter table public.party_live enable row level security;
 
@@ -282,26 +297,82 @@ begin
     where live_key = found.live_key;
 end $$;
 
-create or replace function public.add_candle_message(party text, candle_number int, sender_name jsonb, message jsonb) returns void
+-- Reserves a place to upload one recording.
+create or replace function public.begin_media_upload(party text, candle_number int, media_kind text) returns text
 language plpgsql security definer set search_path = '' as $$
 declare
   found public.parties;
-  sender_clean text := public.clean_text(sender_name, 40);
-  body_clean text := public.clean_text(message, 280);
-  existing text;
+  new_path text := party || '/' || public.random_hex(48);
 begin
   select * into found from public.parties where id = party;
   if found.id is null then raise exception 'This cake doesn''t exist.'; end if;
   if candle_number is null or candle_number < 0 or candle_number >= (found.config ->> 'candles')::int then
     raise exception 'That candle doesn''t exist.';
   end if;
-  if sender_clean = '' or body_clean = '' then raise exception 'Add your name and a message.'; end if;
+  if media_kind is null or media_kind not in ('voice', 'video') then raise exception 'Pick voice or video.'; end if;
+  if exists (select 1 from public.candle_messages where party_id = party and candle = candle_number) then
+    raise exception 'Someone just took that candle. Pick another one.';
+  end if;
+  if not public.allow('upload:' || public.visitor(), 20, 60) then
+    raise exception 'That''s a lot of recordings. Try again in a while.';
+  end if;
+  insert into public.media_uploads (path, party_id, candle, kind) values (new_path, party, candle_number, media_kind);
+  return new_path;
+end $$;
+
+-- The storage policy below asks this before accepting a file.
+create or replace function public.media_upload_allowed(object_name text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.media_uploads
+    where path = object_name and used_at is null and created_at > now() - interval '15 minutes'
+  )
+$$;
+
+drop function if exists public.add_candle_message(text, int, jsonb, jsonb);
+
+create or replace function public.add_candle_message(party text, candle_number int, sender_name jsonb, message jsonb, media jsonb default null) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  found public.parties;
+  sender_clean text := public.clean_text(sender_name, 40);
+  body_clean text := public.clean_text(message, 280);
+  existing text;
+  upload public.media_uploads;
+  media_clean jsonb;
+begin
+  select * into found from public.parties where id = party;
+  if found.id is null then raise exception 'This cake doesn''t exist.'; end if;
+  if candle_number is null or candle_number < 0 or candle_number >= (found.config ->> 'candles')::int then
+    raise exception 'That candle doesn''t exist.';
+  end if;
+  if sender_clean = '' or (body_clean = '' and media is null) then raise exception 'Add your name and a message.'; end if;
   select sender into existing from public.candle_messages where party_id = party and candle = candle_number;
-  if existing is not null then raise exception '% just wrote on that candle. Pick another one.', existing; end if;
+  if existing is not null then raise exception '% just took that candle. Pick another one.', existing; end if;
   if not public.allow('message:' || party || ':' || public.visitor(), 12, 10) then
     raise exception 'That''s a lot of messages. Try again in a few minutes.';
   end if;
-  insert into public.candle_messages (party_id, candle, sender, body) values (party, candle_number, sender_clean, body_clean);
+  if media is not null then
+    select * into upload from public.media_uploads
+      where path = media ->> 'path' and party_id = party and candle = candle_number and used_at is null;
+    if upload.path is null
+       or not exists (select 1 from storage.objects where bucket_id = 'candle-media' and name = upload.path) then
+      raise exception 'That recording didn''t upload. Try sending it again.';
+    end if;
+    if coalesce(media ->> 'key', '') !~ '^[A-Za-z0-9_-]{43}$'
+       or coalesce(media ->> 'iv', '') !~ '^[A-Za-z0-9_-]{16}$'
+       or coalesce(media ->> 'type', '') !~ ('^' || case upload.kind when 'voice' then 'audio' else 'video' end || '/(webm|mp4)$')
+       or jsonb_typeof(media -> 'seconds') is distinct from 'number'
+       or (media ->> 'seconds')::numeric not between 0 and 120 then
+      raise exception 'That recording didn''t upload. Try sending it again.';
+    end if;
+    media_clean := jsonb_build_object(
+      'kind', upload.kind, 'path', upload.path, 'key', media -> 'key',
+      'iv', media -> 'iv', 'type', media -> 'type', 'seconds', media -> 'seconds'
+    );
+    update public.media_uploads set used_at = now() where path = upload.path;
+  end if;
+  insert into public.candle_messages (party_id, candle, sender, body, media) values (party, candle_number, sender_clean, body_clean, media_clean);
   update public.party_live set taken = public.taken_list(party) where live_key = found.live_key;
 end $$;
 
@@ -312,7 +383,7 @@ begin
     raise exception 'Only the birthday person can read these.';
   end if;
   return (
-    select coalesce(jsonb_agg(jsonb_build_object('candle', candle, 'from', sender, 'text', body) order by candle), '[]'::jsonb)
+    select coalesce(jsonb_agg(jsonb_build_object('candle', candle, 'from', sender, 'text', body, 'media', media) order by candle), '[]'::jsonb)
     from public.candle_messages where party_id = party
   );
 end $$;
@@ -326,6 +397,19 @@ grant execute on function
   public.read_party(text, text),
   public.unlock_party(text, text),
   public.set_party_state(text, text, jsonb),
-  public.add_candle_message(text, int, jsonb, jsonb),
+  public.begin_media_upload(text, int, text),
+  public.media_upload_allowed(text),
+  public.add_candle_message(text, int, jsonb, jsonb, jsonb),
   public.read_candle_messages(text, text)
 to anon, authenticated;
+
+-- Voice and video files. Only encrypted bytes are ever stored. Files open by exact URL, but
+-- with no select policy nobody can list them, and only a reserved slot can add one.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('candle-media', 'candle-media', true, 8388608, array['application/octet-stream'])
+on conflict (id) do update
+  set public = excluded.public, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Reserved uploads only" on storage.objects;
+create policy "Reserved uploads only" on storage.objects for insert to anon, authenticated
+  with check (bucket_id = 'candle-media' and public.media_upload_allowed(name));

@@ -88,8 +88,21 @@
       <p class="sheet-sub" id="composeSub"></p>
       <label for="fromName">Your name</label>
       <input id="fromName" type="text" maxlength="40" required autocomplete="name">
-      <label for="messageText">Your message</label>
-      <textarea id="messageText" rows="4" maxlength="280" required></textarea>
+      <div class="kinds" id="kinds" role="radiogroup" aria-label="Kind of message">
+        <label><input type="radio" name="kind" value="text" checked><span>Write</span></label>
+        <label class="needs-recording"><input type="radio" name="kind" value="voice"><span>Voice</span></label>
+        <label class="needs-recording"><input type="radio" name="kind" value="video"><span>Video</span></label>
+      </div>
+      <div id="writePanel">
+        <label for="messageText">Your message</label>
+        <textarea id="messageText" rows="4" maxlength="280" required></textarea>
+      </div>
+      <div class="record" id="recordPanel" hidden>
+        <video id="recordVideo" playsinline hidden></video>
+        <audio id="recordAudio" controls hidden></audio>
+        <p class="note" id="recordStatus" aria-live="polite"></p>
+        <button class="btn" id="recordToggle" type="button"></button>
+      </div>
       <p class="note" id="composeNote" aria-live="polite"></p>
       <div class="sheet-actions">
         <button class="btn" id="composeCancel" type="button">Cancel</button>
@@ -101,6 +114,9 @@
   <dialog id="reader" class="sheet">
     <p class="sheet-sub" id="readerCount"></p>
     <blockquote id="readerText"></blockquote>
+    <video class="reader-media" id="readerVideo" controls playsinline hidden></video>
+    <audio class="reader-media" id="readerAudio" controls hidden></audio>
+    <p class="note" id="readerStatus" aria-live="polite"></p>
     <p class="reader-from" id="readerFrom"></p>
     <div class="sheet-actions">
       <button class="btn" id="readerPrev" type="button">Previous</button>
